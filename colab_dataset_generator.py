@@ -5,8 +5,6 @@
 
 !chmod 755 -R stockfish_13_linux_x64_bmi2
 
-!ls
-
 import csv
 import os
 import sys
