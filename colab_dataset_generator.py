@@ -1,9 +1,11 @@
 !yes | pip uninstall python-chess
 !pip install progress py-cpuinfo chess
+!pip install -U -q PyDrive
 
 !wget https://raw.githubusercontent.com/Medvate/chess_ai_with_pytorch/stockfish_for_colab/stockfish_13_linux_x64_bmi2
 
 !chmod 755 -R stockfish_13_linux_x64_bmi2
+
 
 import csv
 import os
@@ -20,10 +22,14 @@ import chess
 import chess.engine
 import cpuinfo
 import numpy as np
+from pydrive.auth import GoogleAuth
+from pydrive.drive import GoogleDrive
+from google.colab import auth
+from oauth2client.client import GoogleCredentials
 
 
 DATASET_LENGTH = 2_500_000
-DATASET_PATH = os.path.join(os.getcwd(), f'drive/MyDrive/chess_datasets/{str(uuid.uuid4()).replace("-", "_")}.csv')
+DATASET_NAME = f'{str(uuid.uuid4()).replace("-", "_")}.csv'
 HEADER = ['white_piece_1', 'black_piece_1', 'white_piece_2', 'black_piece_2',
           'white_piece_3', 'black_piece_3', 'white_piece_4', 'black_piece_4',
           'white_piece_5', 'black_piece_5', 'white_piece_6', 'black_piece_6',
@@ -34,9 +40,6 @@ STOCKFISH_ENGINE = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
 
 ENGINE_LIMIT = chess.engine.Limit(depth=16)
 
-MAX_STOCKFISH_SCORE = 10_000
-MIN_STOCKFISH_SCORE = -10_000
-
 MU_FOR_RANDOM = 128
 SIGMA_FOR_RANDOM = 58
 
@@ -44,11 +47,9 @@ SIGMA_FOR_RANDOM = 58
 def create_random_board() -> chess.Board:
     """
     Создает случайную ситуацию на шахматной доске.
-
     Число ходов - это рандомное число нормального распределения,
     описывающего продолжительность реальных игры в шахматы.
     Источник: https://ingram-braun.net/erga/2015/02/on-the-average-move-number-of-a-chess-game/
-
     :return: Случайная шахматная ситуация.
     """
     random_depth = -1
@@ -70,9 +71,7 @@ def create_random_board() -> chess.Board:
 def _get_stockfish_score(board: chess.Board) -> int:
     """
     Выдает значение, отвечающее на вопрос: "Насколько хорошая позиция сейчас у белых?"
-
     При вычислении используется Stockfish - лучший шахматный движок по многим рейтингам.
-
     :param board: Шахматная доска.
     :return: Качество позиции белых.
     """
@@ -84,7 +83,6 @@ def _str_to_matrix_str(board_as_str: str) -> str:
     """
     Преобразует строку, длиной 64, в матрицу 8x8; затем компактно записывает матрицу,
     как строку (которую можно парсить встроенным методом eval).
-
     :param board_as_str: Шахматная доска, как строка из 0 и 1.
     :return: Строка-матрица.
     """
@@ -95,7 +93,6 @@ def _str_to_matrix_str(board_as_str: str) -> str:
 def _get_one_piece_board_as_matrix_str(board: chess.Board, piece_type: int, color: bool) -> str:
     """
     Находит строку-матрицу, в которой содержится информация о конкретном типе фигур конретного цвета.
-
     :param board: Шахматная доска.
     :param piece_type: Тип фигуры, матрицу которой строим (Пешка, Конь, Слон, Ладья, Ферзь или Король).
     :param color: Цвет фигур, для которых считает (Белые или Черные).
@@ -110,9 +107,7 @@ def _get_one_piece_board_as_matrix_str(board: chess.Board, piece_type: int, colo
 def _cell_name_to_matrix_index(cell_name: str) -> int:
     """
     Преобразуем UCI-название шахматного поля в индекс матрицы.
-
     Пример: 'f8' --> 5; 'e1' --> 60.
-
     :param cell_name: Имя клетки по UCI.
     :return: Индекс клетки в матрице.
     """
@@ -124,7 +119,6 @@ def _cell_name_to_matrix_index(cell_name: str) -> int:
 def _get_legal_moves_as_matrix_str(board: chess.Board, color: bool) -> str:
     """
     Находит строку-матрицу, в которой содержатся все возможные ходы фигур выбранного цвета.
-
     :param board: Шахматная доска.
     :param color: Цвет фигур.
     :return: Строка-матрица.
@@ -143,10 +137,8 @@ def _get_legal_moves_as_matrix_str(board: chess.Board, color: bool) -> str:
 def board_to_csv_line(board: chess.Board) -> List[str] or None:
     """
     Преобразует ситуацию на шахматной доске в данные для обучения.
-
     Иногда Stockfish вместо оценки возвращает None, такие
     шахматные ситуации мы пропускаем (тоже возвращает None).
-
     :param board: Шахматная доска.
     :return: Список из 14 матриц размерности 8x8, а также оценка Stockfish'а, или None.
     """
@@ -169,27 +161,29 @@ def board_to_csv_line(board: chess.Board) -> List[str] or None:
     return csv_line
 
 
-def create_file_on_google_disk(filepath: str) -> None:
-    """
-    Создает файл на Google-диске.
-    """
-    file = open(filepath, 'w')
-    file.close()
-    print(f'Файл был создан: {filepath}')
-
-
-if __name__ == '__main__':    
+if __name__ == '__main__':
     print(platform.system())
     print(platform.processor())
     print(cpuinfo.get_cpu_info()['brand_raw'])
 
-    from google.colab import drive
-    drive.mount('/content/drive')
+    auth.authenticate_user()
+    gauth = GoogleAuth()
+    gauth.credentials = GoogleCredentials.get_application_default()
+    drive = GoogleDrive(gauth)
 
-    create_file_on_google_disk(DATASET_PATH)
+    drive_list = drive.ListFile().GetList()
+    DATASET_DIR_ID = None
+    for d in drive_list:
+        if d['title'] == 'chess_datasets':
+            DATASET_DIR_ID = d['id']
+            break
 
-    DATASET_WRITER = csv.writer(open(DATASET_PATH, 'w'), delimiter='|')
-    DATASET_WRITER.writerow(HEADER)
+    ALL_DATASET_LINES = list()
+    ALL_DATASET_LINES.append('|'.join(HEADER))
+
+    DATASET = drive.CreateFile({'title': DATASET_NAME, 'parents': [{'id': DATASET_DIR_ID}]})
+    DATASET.Upload()
+    print(f"Датасет был создан: '{DATASET_NAME}'")
 
     start_time = time.time()
 
@@ -200,9 +194,16 @@ if __name__ == '__main__':
 
         if dataset_line is not None:
             counter += 1
-            DATASET_WRITER.writerow(dataset_line)
+            ALL_DATASET_LINES.append('|'.join(dataset_line))
+            
             sys.stdout.write(f"\r{counter}/{DATASET_LENGTH}")
             sys.stdout.flush()
+
+            if counter % 1_000 == 0:
+                if gauth.access_token_expired:
+                    gauth.Refresh()
+                DATASET.SetContentString('\n'.join(ALL_DATASET_LINES))
+                DATASET.Upload()
 
     delta_time = time.time() - start_time
     print(f"\nПотраченно времени: {int(delta_time // 60)}:{int(delta_time % 60)} мин.")
