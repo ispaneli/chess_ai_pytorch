@@ -12,13 +12,13 @@ from progress.bar import IncrementalBar
 
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-NUMBER_OF_EPOCHS = 1_000
-RESULT_FOLDER = os.path.join(os.getcwd(), 'result')
+NUMBER_OF_EPOCHS = 300
+DIR_FOR_WEIGHTS = os.path.join(os.getcwd(), 'weights')
 
-DATASET_PATH = os.path.join(os.getcwd(), 'NORM_FINAL_DATASET.csv')
-DATASET_LENGTH = 4_600_000
-DATASET_FOR_TRAIN_LENGTH = 4_500_000
-CHUNK_SIZE = 50_000
+DATASET_PATH = os.path.join(os.getcwd(), 'TANH_NORM_CHESS_DATASET.csv')
+TRAIN_DATASET_LENGTH = 4_500_000
+TEST_DATASET_LENGTH = 100_000
+CHUNK_SIZE = 250_000
 
 LOG_FILE = open(f'train_{uuid.uuid4()}.log', 'w')
 
@@ -44,6 +44,9 @@ class ChessDataset:
 
         self._start_index = start
         self._stop_index = stop
+
+        if ChessDataset._chunk_size > self._stop_index - self._start_index:
+            self._chunk_size = self._stop_index - self._start_index
 
     def __len__(self) -> int:
         """
@@ -89,26 +92,27 @@ class ChessModel(torch.nn.Module):
     Модель для AI, играющего в шахматы.
     """
 
-    def __init__(self, deep_depth: int) -> None:
+    def __init__(self) -> None:
         """
         Инициализация модели.
-
-        :param deep_depth: Глубина модели (число слоёв).
         """
         super(ChessModel, self).__init__()
 
-        self.deep_depth = deep_depth
+        self.conv_1 = torch.nn.Sequential(torch.nn.Conv2d(14, 28, kernel_size=(3, 3), padding=(1, 1)),
+                                          torch.nn.ReLU(), torch.nn.MaxPool2d(kernel_size=2, stride=2))
 
-        self.conv_layers = torch.nn.ModuleList([torch.nn.Sequential(
-            torch.nn.Conv2d(16, 32, (3, 3), padding=(1, 1)), torch.nn.ReLU())]
-            + [torch.nn.Sequential(torch.nn.Conv2d(32, 32, (3, 3), padding=(1, 1)),
-                                   torch.nn.ReLU()) for _ in range(self.deep_depth - 1)])
+        self.conv_2 = torch.nn.Sequential(torch.nn.Conv2d(28, 56, kernel_size=(3, 3), padding=(1, 1)),
+                                          torch.nn.ReLU(), torch.nn.MaxPool2d(kernel_size=2, stride=2))
 
         self.flatten = torch.nn.Flatten()
-        self.linear = torch.nn.Linear(2048, 64)
+        self.drop_out = torch.nn.Dropout()
+
+        self.linear_1 = torch.nn.Linear(in_features=224, out_features=28)
         self.relu = torch.nn.ReLU()
-        self.final_linear = torch.nn.Linear(64, 1)
-        self.sigmoid = torch.nn.Sigmoid()
+
+        self.linear_2 = torch.nn.Linear(in_features=28, out_features=1)
+
+        self.tanh = torch.nn.Tanh()
 
     def forward(self, x: torch.FloatTensor) -> torch.FloatTensor:
         """
@@ -117,82 +121,96 @@ class ChessModel(torch.nn.Module):
         :param x: Входные данные.
         :return: Выходные данные (результат работы модели).
         """
-        new_x = torch.zeros(16, 8, 8).to(DEVICE)
-        new_x[:14, :, :] = x
-        x = new_x
         x.unsqueeze_(0)
 
-        for conv_i in self.conv_layers:
-            x = conv_i(x)
+        x = self.conv_1(x)
+        x = self.conv_2(x)
+
         x = self.flatten(x)
-        x = self.linear(x)
+        x = self.drop_out(x)
+
+        x = self.linear_1(x)
         x = self.relu(x)
-        x = self.final_linear(x)
-        output = self.sigmoid(x)
-        return output
+
+        x = self.linear_2(x)
+
+        return self.tanh(x)
 
 
 if __name__ == '__main__':
-    if not os.path.exists(RESULT_FOLDER):
-        os.mkdir(RESULT_FOLDER)
+    if not os.path.exists(DIR_FOR_WEIGHTS):
+        os.mkdir(DIR_FOR_WEIGHTS)
     else:
-        raise FileExistsError("Модель уже обучена.")
+        raise FileExistsError("Существует папка с весами. Видимо, модель уже обучена.")
 
     if not os.path.exists(DATASET_PATH):
         raise FileExistsError("Датасет не найден.")
 
     LOG_FILE.write(f"START TIME: {time.asctime()}.\n")
 
-    DATASET_FOR_TRAIN = ChessDataset(DATASET_PATH, start=0, stop=DATASET_FOR_TRAIN_LENGTH)
-    DATASET_FOR_CHECK = ChessDataset(DATASET_PATH, start=DATASET_FOR_TRAIN_LENGTH, stop=DATASET_LENGTH)
+    DATASET_FOR_TRAIN = ChessDataset(DATASET_PATH, start=0, stop=TRAIN_DATASET_LENGTH)
+    DATASET_FOR_TEST = ChessDataset(DATASET_PATH, start=TRAIN_DATASET_LENGTH,
+                                    stop=TRAIN_DATASET_LENGTH + TEST_DATASET_LENGTH)
 
-    MODEL = ChessModel(deep_depth=4).to(DEVICE)
+    MODEL = ChessModel().to(DEVICE)
     OPTIMIZER = torch.optim.Adam(MODEL.parameters(), lr=0.0005)
     MSE_LOSS = torch.nn.MSELoss()
 
+    test_losses = list()
+
     for epoch_number in range(1, NUMBER_OF_EPOCHS + 1):
-        epoch_bar = IncrementalBar(f'Epoch {epoch_number}/{NUMBER_OF_EPOCHS}:', max=DATASET_FOR_TRAIN_LENGTH)
+        epoch_bar = IncrementalBar(f'Epoch {epoch_number}/{NUMBER_OF_EPOCHS}:', max=TRAIN_DATASET_LENGTH)
 
         # 1.Обучение
+        epoch_train_loss = 0
         MODEL.train()
+
         for input_data, target in DATASET_FOR_TRAIN:
             OPTIMIZER.zero_grad()
 
             output_data = MODEL(input_data)
 
-            loss = MSE_LOSS(output_data, target)
-            loss.backward()
+            train_loss = MSE_LOSS(output_data, target)
+            train_loss.backward()
+            epoch_train_loss += train_loss
+
             OPTIMIZER.step()
             epoch_bar.next()
+
         epoch_bar.finish()
+        epoch_train_loss = epoch_train_loss / TRAIN_DATASET_LENGTH
 
         # 2.Проверка
-        targets_as_list = list()
-        outputs_as_list = list()
-
+        epoch_test_loss = 0
         MODEL.eval()
+
         with torch.no_grad():
-            for input_data, target in DATASET_FOR_CHECK:
+            for input_data, target in DATASET_FOR_TEST:
                 output_data = MODEL(input_data)
+                epoch_test_loss += MSE_LOSS(output_data, target)
 
-                targets_as_list.append(float(target[0][0]))
-                outputs_as_list.append(float(output_data[0][0]))
+        epoch_test_loss = epoch_test_loss / TEST_DATASET_LENGTH
 
-        targets_as_tensor = torch.FloatTensor(targets_as_list)
-        targets_as_tensor = targets_as_tensor.to(torch.float32)
-
-        outputs_as_tensor = torch.FloatTensor(outputs_as_list)
-        outputs_as_tensor = outputs_as_tensor.to(torch.float32)
-
-        epoch_loss = MSE_LOSS(outputs_as_tensor, targets_as_tensor)
-
-        print(f"Epoch {epoch_number}/{NUMBER_OF_EPOCHS}: MSE = {epoch_loss}.")
-        LOG_FILE.write(f"[{time.asctime()}]: Epoch {epoch_number}/{NUMBER_OF_EPOCHS}: MSE = {epoch_loss}.\n")
+        # 3.Сохранение и вывод результатов.
+        epoch_loss_as_str = f"TRAIN_MSE = {epoch_train_loss}, TEST_MSE = {epoch_test_loss}."
+        print(f"Epoch {epoch_number}/{NUMBER_OF_EPOCHS}: {epoch_loss_as_str}")
+        LOG_FILE.write(f"[{time.asctime()}]: Epoch {epoch_number}/{NUMBER_OF_EPOCHS}: {epoch_loss_as_str}\n")
         LOG_FILE.flush()
         os.fsync(LOG_FILE)
 
-        # 3.Сохранение
-        torch.save(MODEL.state_dict(), os.path.join(RESULT_FOLDER, f'model_epoch_{epoch_number}.pt'))
+        torch.save(MODEL.state_dict(), os.path.join(DIR_FOR_WEIGHTS, f'model_epoch_{epoch_number}.pt'))
+
+        # 4. Тест на переобучение модели.
+        if len(test_losses) > 15:
+            counter = 0
+            for prev_loss in test_losses[-15:]:
+                if prev_loss < epoch_test_loss:
+                    counter += 1
+
+            if counter == 15:
+                raise Exception('Overfitting has begun!')
+            else:
+                test_losses.append(epoch_test_loss)
 
     LOG_FILE.write(f"STOP TIME: {time.asctime()}.\n")
 
