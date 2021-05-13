@@ -18,7 +18,7 @@ DIR_FOR_WEIGHTS = os.path.join(os.getcwd(), 'weights')
 DATASET_PATH = os.path.join(os.getcwd(), 'TANH_NORM_CHESS_DATASET.csv')
 TRAIN_DATASET_LENGTH = 4_500_000
 TEST_DATASET_LENGTH = 100_000
-CHUNK_SIZE = 250_000
+CHUNK_SIZE = 500_000
 
 LOG_FILE = open(f'train_{uuid.uuid4()}.log', 'w')
 
