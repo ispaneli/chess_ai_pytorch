@@ -15,10 +15,9 @@ DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 NUMBER_OF_EPOCHS = 300
 DIR_FOR_WEIGHTS = os.path.join(os.getcwd(), 'weights')
 
-DATASET_PATH = os.path.join(os.getcwd(), 'TANH_NORM_CHESS_DATASET.csv')
-TRAIN_DATASET_LENGTH = 81
+DATASET_PATH = os.path.join(os.getcwd(), 'SMALL_TANH_NORM_CHESS_DATASET.csv')
+TRAIN_DATASET_LENGTH = 3_500_000
 TEST_DATASET_LENGTH = 100_000
-CHUNK_SIZE = 9
 
 LOG_FILE = open(f'train_{uuid.uuid4()}.log', 'w')
 
@@ -27,9 +26,9 @@ class ChessDataset:
     """
     Датасет для обучения модели игре в шахматы.
     """
-    _chunk_size = CHUNK_SIZE
+    _chunk_size = 100_000
 
-    def __init__(self, path: str, start: int, stop: int) -> None:
+    def __init__(self, path: str, start: int, stop: int, for_train: bool = False) -> None:
         """
         Инициализация датасета.
 
@@ -39,41 +38,58 @@ class ChessDataset:
         :param path: Путь к CSV-файлу.
         :param start: Индекс начала нужных данных.
         :param stop: Индекс конца нужный данных.
+        :param for_train: Датасет для обучения или для проверки.
+        :return: None.
         """
         self._dataset_path = path
+        self._for_train = for_train
 
         self._start_index = start
         self._stop_index = stop
 
-        if ChessDataset._chunk_size > self._stop_index - self._start_index:
-            self._chunk_size = self._stop_index - self._start_index
+        self._inputs = list()
+        self._targets = list()
+        self._add_gpu_data()
+        self._to_gpu()
 
-        self._is_test_dataset = bool((self._stop_index - self._start_index) // self._chunk_size)
-        self._test_chunk = self._get_gpu_chunk(self._start_index, self._stop_index) if self._is_test_dataset else None
+    def _to_gpu(self):
+        self._inputs = torch.stack(self._inputs).to(DEVICE)
+        self._targets = torch.stack(self._targets).to(DEVICE)
 
-    def _get_gpu_chunk(self, start: int, stop: int):
+    def _add_gpu_data(self) -> None:
         """
-        Выдает GPU-чанк в заданном диапазоне.
+        Считывает данные на GPU в заданном диапазоне.
 
-        :param start: Начала диапазона.
-        :param stop: Конец диапазона.
-        :return: Чанк.
+        :return: None.
         """
-        chunk = pd.read_csv(self._dataset_path, sep='|', skiprows=start, nrows=stop)
-        gpu_chunk = list()
+        bar_title = 'Train' if self._for_train else 'Test'
+        loading_bar = IncrementalBar(f"Loading '{bar_title} dataset':", max=self._stop_index - self._start_index)
 
-        for series in chunk.iloc:
-            x_as_list = [eval(matrix_as_str) for matrix_as_str in series.array[:-1]]
-            x_as_tensor = torch.FloatTensor(x_as_list)
-            x_as_tensor = x_as_tensor.to(torch.float32)
+        with pd.read_csv(self._dataset_path, sep='|', chunksize=self._chunk_size) as chunk_iter:
+            index = -1
+            for chunk in chunk_iter:
+                if index < self._start_index - 1:
+                    index += self._chunk_size
+                    continue
+                for series in chunk.iloc:
+                    index += 1
+                    if index < self._stop_index:
+                        x_as_list = [eval(matrix_as_str) for matrix_as_str in series.array[:-1]]
+                        x_as_tensor = torch.FloatTensor(x_as_list)
+                        x_as_tensor = x_as_tensor.to(torch.float32)
+                        x_as_tensor.unsqueeze_(0)
 
-            y_as_float = series.array[-1]
-            y_as_tensor = torch.FloatTensor([[y_as_float]])
-            y_as_tensor = y_as_tensor.to(torch.float32)
+                        y_as_float = series.array[-1]
+                        y_as_tensor = torch.FloatTensor([[y_as_float]])
+                        y_as_tensor = y_as_tensor.to(torch.float32)
 
-            gpu_chunk.append((x_as_tensor.to(DEVICE), y_as_tensor.to(DEVICE)))
-
-        return gpu_chunk
+                        self._inputs.append(x_as_tensor)
+                        self._targets.append(y_as_tensor)
+                        loading_bar.next()
+                    else:
+                        loading_bar.finish()
+                        return
+        loading_bar.finish()
 
     def __len__(self) -> int:
         """
@@ -83,25 +99,14 @@ class ChessDataset:
         """
         return self._stop_index - self._start_index
 
-    def __iter__(self):
+    def __iter__(self) -> (torch.FloatTensor, torch.FloatTensor):
         """
         Реализация метода, поддерживающего цикл for.
 
-        Включает в себя загрузку данных чанками, а не циликом.
-        Данные преобразуются в tensor'ы, записываются в память GPU (используя CUDA).
-
-        :return: Для тестового датасета: (тензор входных данных, тензор выходных данных).
-                 Для обучающего датасета: Чанк с (тензорами входных данных, тензорами выходных данных).
+        :return: Tензор входных данных, тензор выходных данных.
         """
-        if self._is_test_dataset:
-            for x_as_tensor, y_as_tensor in self._test_chunk:
-                yield x_as_tensor, y_as_tensor
-        else:
-            num_of_chunks = (self._stop_index - self._start_index) // self._chunk_size
-
-            for i in range(num_of_chunks):
-                gpu_chunk = self._get_gpu_chunk(i * self._start_index, i * self._start_index + self._chunk_size)
-                yield gpu_chunk
+        for x_as_tensor, y_as_tensor in zip(self._inputs, self._targets):
+            yield x_as_tensor, y_as_tensor
 
 
 class ChessModel(torch.nn.Module):
@@ -138,8 +143,6 @@ class ChessModel(torch.nn.Module):
         :param x: Входные данные.
         :return: Выходные данные (результат работы модели).
         """
-        x.unsqueeze_(0)
-
         x = self.conv_1(x)
         x = self.conv_2(x)
 
@@ -165,7 +168,7 @@ if __name__ == '__main__':
 
     LOG_FILE.write(f"START TIME: {time.asctime()}.\n")
 
-    DATASET_FOR_TRAIN = ChessDataset(DATASET_PATH, start=0, stop=TRAIN_DATASET_LENGTH)
+    DATASET_FOR_TRAIN = ChessDataset(DATASET_PATH, start=0, stop=TRAIN_DATASET_LENGTH, for_train=True)
     DATASET_FOR_TEST = ChessDataset(DATASET_PATH, start=TRAIN_DATASET_LENGTH,
                                     stop=TRAIN_DATASET_LENGTH + TEST_DATASET_LENGTH)
 
@@ -182,18 +185,17 @@ if __name__ == '__main__':
         epoch_train_loss = 0
         MODEL.train()
 
-        for train_chunk in DATASET_FOR_TRAIN:
-            for input_data, target in train_chunk:
-                OPTIMIZER.zero_grad()
+        for input_data, target in DATASET_FOR_TRAIN:
+            OPTIMIZER.zero_grad()
 
-                output_data = MODEL(input_data)
+            output_data = MODEL(input_data)
 
-                train_loss = MSE_LOSS(output_data, target)
-                train_loss.backward()
-                epoch_train_loss += train_loss
+            train_loss = MSE_LOSS(output_data, target)
+            train_loss.backward()
+            epoch_train_loss += train_loss
 
-                OPTIMIZER.step()
-                epoch_bar.next()
+            OPTIMIZER.step()
+            epoch_bar.next()
 
         epoch_bar.finish()
         epoch_train_loss = epoch_train_loss / TRAIN_DATASET_LENGTH
