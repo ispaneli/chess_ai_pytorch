@@ -2,9 +2,8 @@ import os
 import time
 import uuid
 
-import pandas as pd
+import numpy as np
 import torch
-
 # Чтобы увидеть прогрессбар в PyCharm нужно сделать:
 # 'Run' --> 'Edit Configurations...' --> ✔'Emulate terminal in output console'✔
 from progress.bar import IncrementalBar
@@ -13,12 +12,11 @@ from progress.bar import IncrementalBar
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 NUMBER_OF_EPOCHS = 300
-DIR_FOR_WEIGHTS = os.path.join(os.getcwd(), 'weights')
 
-DATASET_PATH = os.path.join(os.getcwd(), 'SMALL_TANH_NORM_CHESS_DATASET.csv')
-TRAIN_DATASET_LENGTH = 3_500_000
+TRAIN_DATASET_LENGTH = 1_500_000
 TEST_DATASET_LENGTH = 100_000
 
+DIR_FOR_WEIGHTS = os.path.join(os.getcwd(), 'weights')
 LOG_FILE = open(f'train_{uuid.uuid4()}.log', 'w')
 
 
@@ -26,87 +24,15 @@ class ChessDataset:
     """
     Датасет для обучения модели игре в шахматы.
     """
-    _chunk_size = 100_000
 
-    def __init__(self, path: str, start: int, stop: int, for_train: bool = False) -> None:
+    def __init__(self, npz_path: str) -> None:
         """
         Инициализация датасета.
 
-        Следующее условия должно выполняться для корректной работы:
-        (end_index - start_index) % self.chunk_size == 0.
-
-        :param path: Путь к CSV-файлу.
-        :param start: Индекс начала нужных данных.
-        :param stop: Индекс конца нужный данных.
-        :param for_train: Датасет для обучения или для проверки.
-        :return: None.
+        :param npz_path: Путь к CSV-файлу.
         """
-        self._dataset_path = path
-        self._for_train = for_train
-
-        self._start_index = start
-        self._stop_index = stop
-
-        self._inputs = list()
-        self._targets = list()
-        self._add_gpu_data()
-        self._to_gpu()
-
-    def _to_gpu(self):
-        self._inputs = torch.stack(self._inputs).to(DEVICE)
-        self._targets = torch.stack(self._targets).to(DEVICE)
-
-    def _add_gpu_data(self) -> None:
-        """
-        Считывает данные на GPU в заданном диапазоне.
-
-        :return: None.
-        """
-        bar_title = 'Train' if self._for_train else 'Test'
-        loading_bar = IncrementalBar(f"Loading '{bar_title} dataset':", max=self._stop_index - self._start_index)
-
-        with pd.read_csv(self._dataset_path, sep='|', chunksize=self._chunk_size) as chunk_iter:
-            index = -1
-            for chunk in chunk_iter:
-                if index < self._start_index - 1:
-                    index += self._chunk_size
-                    continue
-                for series in chunk.iloc:
-                    index += 1
-                    if index < self._stop_index:
-                        x_as_list = [eval(matrix_as_str) for matrix_as_str in series.array[:-1]]
-                        x_as_tensor = torch.FloatTensor(x_as_list)
-                        x_as_tensor = x_as_tensor.to(torch.float32)
-                        x_as_tensor.unsqueeze_(0)
-
-                        y_as_float = series.array[-1]
-                        y_as_tensor = torch.FloatTensor([[y_as_float]])
-                        y_as_tensor = y_as_tensor.to(torch.float32)
-
-                        self._inputs.append(x_as_tensor)
-                        self._targets.append(y_as_tensor)
-                        loading_bar.next()
-                    else:
-                        loading_bar.finish()
-                        return
-        loading_bar.finish()
-
-    def __len__(self) -> int:
-        """
-        Возвращает длину нужных данных.
-
-        :return: Длина.
-        """
-        return self._stop_index - self._start_index
-
-    def __iter__(self) -> (torch.FloatTensor, torch.FloatTensor):
-        """
-        Реализация метода, поддерживающего цикл for.
-
-        :return: Tензор входных данных, тензор выходных данных.
-        """
-        for x_as_tensor, y_as_tensor in zip(self._inputs, self._targets):
-            yield x_as_tensor, y_as_tensor
+        self.inputs = torch.cuda.FloatTensor(np.load(npz_path)['inputs'])
+        self.targets = torch.cuda.FloatTensor(np.load(npz_path)['targets'])
 
 
 class ChessModel(torch.nn.Module):
@@ -163,14 +89,10 @@ if __name__ == '__main__':
     else:
         raise FileExistsError("Существует папка с весами. Видимо, модель уже обучена.")
 
-    if not os.path.exists(DATASET_PATH):
-        raise FileExistsError("Датасет не найден.")
-
     LOG_FILE.write(f"START TIME: {time.asctime()}.\n")
 
-    DATASET_FOR_TRAIN = ChessDataset(DATASET_PATH, start=0, stop=TRAIN_DATASET_LENGTH, for_train=True)
-    DATASET_FOR_TEST = ChessDataset(DATASET_PATH, start=TRAIN_DATASET_LENGTH,
-                                    stop=TRAIN_DATASET_LENGTH + TEST_DATASET_LENGTH)
+    DATASET_FOR_TRAIN = ChessDataset('train.npz')
+    DATASET_FOR_TEST = ChessDataset('test.npz')
 
     MODEL = ChessModel().to(DEVICE)
     OPTIMIZER = torch.optim.Adam(MODEL.parameters(), lr=0.0005)
@@ -185,7 +107,7 @@ if __name__ == '__main__':
         epoch_train_loss = 0
         MODEL.train()
 
-        for input_data, target in DATASET_FOR_TRAIN:
+        for input_data, target in zip(DATASET_FOR_TRAIN.inputs, DATASET_FOR_TRAIN.targets):
             OPTIMIZER.zero_grad()
 
             output_data = MODEL(input_data)
@@ -205,7 +127,7 @@ if __name__ == '__main__':
         MODEL.eval()
 
         with torch.no_grad():
-            for input_data, target in DATASET_FOR_TEST:
+            for input_data, target in zip(DATASET_FOR_TEST.inputs, DATASET_FOR_TEST.targets):
                 output_data = MODEL(input_data)
                 epoch_test_loss += MSE_LOSS(output_data, target)
 
