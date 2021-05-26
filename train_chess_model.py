@@ -13,8 +13,8 @@ DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 NUMBER_OF_EPOCHS = 300
 
-TRAIN_DATASET_LENGTH = 1_500_000
-TEST_DATASET_LENGTH = 100_000
+TRAIN_DATASET_LENGTH = 1_000_000
+TEST_DATASET_LENGTH = 50_000
 
 DIR_FOR_WEIGHTS = os.path.join(os.getcwd(), 'weights')
 LOG_FILE = open(f'train_{uuid.uuid4()}.log', 'w')
@@ -91,8 +91,8 @@ if __name__ == '__main__':
 
     LOG_FILE.write(f"START TIME: {time.asctime()}.\n")
 
-    DATASET_FOR_TRAIN = ChessDataset('train.npz')
-    DATASET_FOR_TEST = ChessDataset('test.npz')
+    DATASET_FOR_TRAIN = ChessDataset('train_1kk.npz')
+    DATASET_FOR_TEST = ChessDataset('test_1kk.npz')
 
     MODEL = ChessModel().to(DEVICE)
     OPTIMIZER = torch.optim.Adam(MODEL.parameters(), lr=0.0005)
