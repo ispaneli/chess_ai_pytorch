@@ -5,7 +5,7 @@ from tensorflow.keras.optimizers import Adadelta, Adam
 from tensorflow.keras.callbacks import ModelCheckpoint, CSVLogger
 
 
-PATH_OF_DATASET = "train_750.npz"
+PATH_OF_DATASET = "train.npz"
 PATH_OF_BEST_WEIGHTS = "best_weights.h5"
 PATH_OF_CSV_LOGGER = "result_of_fit.csv"
 
