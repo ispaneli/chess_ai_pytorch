@@ -1,0 +1,127 @@
+.board {
+    width: 624px;
+    margin: auto
+}
+
+.info {
+    /* width: 624px;
+    margin: auto; */
+    display: none;
+}
+
+.move-history {
+    /*max-height: 400px;*/
+    /*overflow-y: scroll;*/
+}
+
+/* clearfix */
+.clearfix-7da63 {
+    clear: both;
+}
+
+/* board */
+.board-b72b1 {
+    border: 2px solid #404040;
+    -moz-box-sizing: content-box;
+    box-sizing: content-box;
+}
+
+/* square */
+.square-55d63 {
+    float: left;
+    position: relative;
+
+    /* disable any native browser highlighting */
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    -khtml-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+}
+
+/* white square */
+.white-1e1d7 {
+    background-color: #f0d9b5;
+    color: #b58863;
+}
+
+/* black square */
+.black-3c85d {
+    background-color: #b58863;
+    color: #f0d9b5;
+}
+
+/* highlighted square */
+.highlight1-32417, .highlight2-9c5d2 {
+    -webkit-box-shadow: inset 0 0 3px 3px yellow;
+    -moz-box-shadow: inset 0 0 3px 3px yellow;
+    box-shadow: inset 0 0 3px 3px yellow;
+}
+
+/* notation */
+.notation-322f9 {
+    cursor: default;
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    position: absolute;
+}
+
+.alpha-d2270 {
+    bottom: 1px;
+    right: 3px;
+}
+
+.numeric-fc462 {
+    top: 2px;
+    left: 2px;
+}
+
+html {
+    overflow: hidden;
+}
+
+.bg-img {
+    position: absolute;
+    z-index: -3;
+    left: -20px;
+    top: -20px;
+    right: -20px;
+    bottom: -20px;
+    filter: blur(7px);
+    background: url("../img/background.jpg") no-repeat center;
+    background-size: cover;
+}
+
+.dark-bg-for-img {
+    background: black;
+    position: absolute;
+    opacity: 32%;
+    z-index: -2;
+    width: 100%;
+    height: 100%;
+    left: 0;
+    top: 0;
+}
+
+.content {
+    position: relative;
+    z-index: 0;
+}
+
+.small_empty_space {
+    padding: 25px;
+}
+
+.large_empty_space {
+    padding: 40px;
+}
+
+.board-title {
+    font-size: 360%;
+    text-align: center;
+    color: #bd8667;
+    text-shadow: #f5d8ba 1px 1px 0, #f5d8ba 2px 2px 0,
+                 #f5d8ba 3px 3px 0, #f5d8ba 4px 4px 0,
+                 #f5d8ba 5px 5px 0;
+}
