@@ -1,1 +1,1 @@
-# chess_ai_with_pytorch
+# Chess AI (using PyTorch)
